@@ -1,0 +1,151 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XAUUSD OHLCV Dashboard</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- jQuery CDN -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- Socket.IO CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto p-4">
+        <h1 class="text-3xl font-bold text-center mb-8">XAUUSD OHLCV Dashboard</h1>
+        
+        <!-- 昨日日圖 OHLCV 表格 -->
+        <div class="mb-8">
+            <h2 class="text-2xl font-bold mb-4">昨日日圖 OHLCV（交易時段）</h2>
+            <div id="yesterday-ohlcv-error" class="text-center text-red-500 hidden">No Yesterday OHLCV Data Available</div>
+            <table id="yesterday-ohlcv-table" class="w-full border-collapse border border-gray-300 hidden">
+                <thead>
+                    <tr class="bg-gray-200">
+                        <th class="border border-gray-300 p-2">開盤價 (Open)</th>
+                        <th class="border border-gray-300 p-2">最高價 (High)</th>
+                        <th class="border border-gray-300 p-2">最低價 (Low)</th>
+                        <th class="border border-gray-300 p-2">收盤價 (Close)</th>
+                        <th class="border border-gray-300 p-2">總成交量 (Volume)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td id="yesterday-open" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="yesterday-high" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="yesterday-low" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="yesterday-close" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="yesterday-volume" class="border border-gray-300 p-2 text-center"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- 實時 H1 OHLCV 表格 -->
+        <div>
+            <h2 class="text-2xl font-bold mb-4">實時 H1 OHLCV</h2>
+            <div id="realtime-ohlcv-error" class="text-center text-red-500 hidden">No Realtime OHLCV Data Available</div>
+            <table id="realtime-ohlcv-table" class="w-full border-collapse border border-gray-300 hidden">
+                <thead>
+                    <tr class="bg-gray-200">
+                        <th class="border border-gray-300 p-2">更新時間 (Update Time)</th>
+                        <th class="border border-gray-300 p-2">開盤價 (Open)</th>
+                        <th class="border border-gray-300 p-2">最高價 (High)</th>
+                        <th class="border border-gray-300 p-2">最低價 (Low)</th>
+                        <th class="border border-gray-300 p-2">收盤價 (Close)</th>
+                        <th class="border border-gray-300 p-2">成交量 (Volume)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td id="realtime-update-time" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="realtime-open" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="realtime-high" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="realtime-low" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="realtime-close" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="realtime-volume" class="border border-gray-300 p-2 text-center"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            // 獲取昨日 OHLCV 數據
+            $.ajax({
+                url: '/api/yesterday_ohlcv',
+                method: 'GET',
+                success: function(data) {
+                    if (data.error) {
+                        $('#yesterday-ohlcv-error').removeClass('hidden');
+                    } else {
+                        $('#yesterday-open').text(data.open.toFixed(2));
+                        $('#yesterday-high').text(data.high.toFixed(2));
+                        $('#yesterday-low').text(data.low.toFixed(2));
+                        $('#yesterday-close').text(data.close.toFixed(2));
+                        $('#yesterday-volume').text(data.volume);
+                        $('#yesterday-ohlcv-table').removeClass('hidden');
+                    }
+                },
+                error: function(error) {
+                    console.error('Error fetching yesterday OHLCV:', error);
+                    $('#yesterday-ohlcv-error').removeClass('hidden');
+                }
+            });
+
+            // 建立 WebSocket 連線
+            const socket = io();
+            socket.on('ohlcv_update', function(data) {
+                $('#realtime-update-time').text(data.update_time);
+                $('#realtime-open').text(data.open.toFixed(2));
+                $('#realtime-high').text(data.high.toFixed(2));
+                $('#realtime-low').text(data.low.toFixed(2));
+                $('#realtime-close').text(data.close.toFixed(2));
+                $('#realtime-volume').text(data.volume);
+                $('#realtime-ohlcv-table').removeClass('hidden');
+                $('#realtime-ohlcv-error').addClass('hidden');
+            });
+        });
+    </script>
+</body>
+</html>
