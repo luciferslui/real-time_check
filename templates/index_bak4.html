@@ -1,0 +1,323 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XAUUSD & GCM2025 OHLCV 與 CME 結算數據儀表板</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- jQuery CDN -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- Socket.IO CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto p-4">
+        <h1 class="text-3xl font-bold text-center mb-8">XAUUSD & GCM2025 OHLCV 與 CME 結算數據儀表板</h1>
+        
+        <!-- 昨日日圖 XAUUSD OHLCV 表格 -->
+        <div class="mb-8">
+            <h2 class="text-2xl font-bold mb-4">昨日日圖 XAUUSD OHLCV（交易時段）</h2>
+            <div id="yesterday-ohlcv-error" class="text-center text-red-500 hidden">無昨日 OHLCV 數據</div>
+            <table id="yesterday-ohlcv-table" class="w-full border-collapse border border-gray-300 hidden">
+                <thead>
+                    <tr class="bg-gray-200">
+                        <th class="border border-gray-300 p-2">開盤價 (Open)</th>
+                        <th class="border border-gray-300 p-2">最高價 (High)</th>
+                        <th class="border border-gray-300 p-2">最低價 (Low)</th>
+                        <th class="border border-gray-300 p-2">收盤價 (Close)</th>
+                        <th class="border border-gray-300 p-2">總成交量 (Volume)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td id="yesterday-open" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="yesterday-high" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="yesterday-low" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="yesterday-close" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="yesterday-volume" class="border border-gray-300 p-2 text-center"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- 實時日線圖 XAUUSD OHLCV 表格 -->
+        <div class="mb-8">
+            <h2 class="text-2xl font-bold mb-4">實時日線圖 XAUUSD OHLCV</h2>
+            <div id="realtime-ohlcv-error" class="text-center text-red-500 hidden">無實時 OHLCV 數據</div>
+            <table id="realtime-ohlcv-table" class="w-full border-collapse border border-gray-300 hidden">
+                <thead>
+                    <tr class="bg-gray-200">
+                        <th class="border border-gray-300 p-2">更新時間 (Update Time)</th>
+                        <th class="border border-gray-300 p-2">開盤價 (Open)</th>
+                        <th class="border border-gray-300 p-2">最高價 (High)</th>
+                        <th class="border border-gray-300 p-2">最低價 (Low)</th>
+                        <th class="border border-gray-300 p-2">收盤價 (Close)</th>
+                        <th class="border border-gray-300 p-2">成交量 (Volume)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td id="realtime-update-time" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="realtime-open" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="realtime-high" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="realtime-low" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="realtime-close" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="realtime-volume" class="border border-gray-300 p-2 text-center"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- 實時 COMEX:GCM2025 日線圖 K-line 表格 -->
+        <div class="mb-8">
+            <h2 class="text-2xl font-bold mb-4">實時 COMEX:GCM2025 日線圖 K-line</h2>
+            <div id="gcm-kline-error" class="text-center text-red-500 hidden">無 GCM2025 K-line 數據</div>
+            <table id="gcm-kline-table" class="w-full border-collapse border border-gray-300 hidden">
+                <thead>
+                    <tr class="bg-gray-200">
+                        <th class="border border-gray-300 p-2">時間戳 (Timestamp)</th>
+                        <th class="border border-gray-300 p-2">開盤價 (Open)</th>
+                        <th class="border border-gray-300 p-2">最高價 (High)</th>
+                        <th class="border border-gray-300 p-2">最低價 (Low)</th>
+                        <th class="border border-gray-300 p-2">收盤價 (Close)</th>
+                        <th class="border border-gray-300 p-2">成交量 (Volume)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td id="gcm-timestamp" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="gcm-open" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="gcm-high" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="gcm-low" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="gcm-close" class="border border-gray-300 p-2 text-center"></td>
+                        <td id="gcm-volume" class="border border-gray-300 p-2 text-center"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- CME Group 金屬期貨結算數據（JUN 25）表格 -->
+        <div class="mb-8">
+            <h2 class="text-2xl font-bold mb-4">CME Group 金屬期貨結算數據（JUN 25）</h2>
+            <div id="cme-settlements-error" class="text-center text-red-500 hidden">無 CME JUN 25 結算數據</div>
+            <table id="cme-settlements-table" class="w-full border-collapse border border-gray-300 ">
+                <thead>
+                    <tr class="bg-gray-200">
+                        <th class="border border-gray-300 p-2">合約月份 (Month)</th>
+                        <th class="border border-gray-300 p-2">開盤價 (Open)</th>
+                        <th class="border border-gray-300 p-2">最高價 (High)</th>
+                        <th class="border border-gray-300 p-2">最低價 (Low)</th>
+                        <th class="border border-gray-300 p-2">最新價 (Last)</th>
+                        <th class="border border-gray-300 p-2">價格變動 (Change)</th>
+                        <th class="border border-gray-300 p-2">結算價 (Settle)</th>
+                        <th class="border border-gray-300 p-2">成交量 (Volume)</th>
+                        <th class="border border-gray-300 p-2">未平倉量 (Open Interest)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td id="cme-month" class="border border-gray-300 p-2 text-center">JUN 25</td>
+                        <td id="cme-open" class="border border-gray-300 p-2 text-center">3240.7</td>
+                        <td id="cme-high" class="border border-gray-300 p-2 text-center">3270.4</td>
+                        <td id="cme-low" class="border border-gray-300 p-2 text-center">3220.1</td>
+                        <td id="cme-last" class="border border-gray-300 p-2 text-center">3254.5B</td>
+                        <td id="cme-change" class="border border-gray-300 p-2 text-center">+19.8</td>
+                        <td id="cme-settle" class="border border-gray-300 p-2 text-center">3247.8</td>
+                        <td id="cme-volume" class="border border-gray-300 p-2 text-center">214,423</td>
+                        <td id="cme-openInterest" class="border border-gray-300 p-2 text-center">224,527</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- XAUUSD 與 GCM2025 日線圖 High-Low 比較表格 -->
+        <div>
+            <h2 class="text-2xl font-bold mb-4">XAUUSD 與 GCM2025 日線圖 High-Low 比較</h2>
+            <div id="high-low-compare-error" class="text-center text-red-500 hidden">無 High-Low 比較數據</div>
+            <table id="high-low-compare-table" class="w-full border-collapse border border-gray-300 hidden">
+                <thead>
+                    <tr class="bg-gray-200">
+                        <th class="border border-gray-300 p-2">項目 (Item)</th>
+                        <th class="border border-gray-300 p-2">High-Low 值 (Value)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="border border-gray-300 p-2 text-center">XAUUSD 日線 High-Low</td>
+                        <td id="xauusd-high-low" class="border border-gray-300 p-2 text-center">無數據</td>
+                    </tr>
+                    <tr>
+                        <td class="border border-gray-300 p-2 text-center">GCM2025 日線 High-Low</td>
+                        <td id="gcm-high-low" class="border border-gray-300 p-2 text-center">無數據</td>
+                    </tr>
+                    <tr>
+                        <td class="border border-gray-300 p-2 text-center">較大值減較小值</td>
+                        <td id="high-low-diff" class="border border-gray-300 p-2 text-center">待計算</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        $(document).ready(function() {
+            // 獲取昨日 XAUUSD OHLCV 數據
+            $.ajax({
+                url: '/api/yesterday_ohlcv',
+                method: 'GET',
+                success: function(data) {
+                    if (data.error) {
+                        $('#yesterday-ohlcv-error').removeClass('hidden');
+                    } else {
+                        $('#yesterday-open').text(data.open.toFixed(2));
+                        $('#yesterday-high').text(data.high.toFixed(2));
+                        $('#yesterday-low').text(data.low.toFixed(2));
+                        $('#yesterday-close').text(data.close.toFixed(2));
+                        $('#yesterday-volume').text(data.volume);
+                        $('#yesterday-ohlcv-table').removeClass('hidden');
+                    }
+                },
+                error: function(error) {
+                    console.error('獲取昨日 OHLCV 錯誤:', error);
+                    $('#yesterday-ohlcv-error').removeClass('hidden');
+                }
+            });
+
+            // 獲取 CME Group JUN 25 結算數據
+            // function fetchCmeSettlements() {
+            //     $.ajax({
+            //         url: '/api/cme_settlements',
+            //         method: 'GET',
+            //         success: function(data) {
+            //             if (data.error) {
+            //                 $('#cme-settlements-error').removeClass('hidden');
+            //             } else {
+            //                 $('#cme-month').text(data.month);
+            //                 $('#cme-open').text(parseFloat(data.open).toFixed(2));
+            //                 $('#cme-high').text(parseFloat(data.high).toFixed(2));
+            //                 $('#cme-low').text(parseFloat(data.low).toFixed(2));
+            //                 $('#cme-last').text(data.last);
+            //                 $('#cme-change').text(data.change);
+            //                 $('#cme-settle').text(parseFloat(data.settle).toFixed(2));
+            //                 $('#cme-volume').text(data.volume);
+            //                 $('#cme-openInterest').text(data.openInterest);
+            //                 $('#cme-settlements-table').removeClass('hidden');
+            //                 $('#cme-settlements-error').addClass('hidden');
+            //             }
+            //         },
+            //         error: function(error) {
+            //             console.error('獲取 CME 結算數據錯誤:', error);
+            //             $('#cme-settlements-error').removeClass('hidden');
+            //         }
+            //     });
+            // }
+
+            // 初次加載 CME 數據
+            // fetchCmeSettlements();
+
+            // 每 5 分鐘更新 CME 數據
+            // setInterval(fetchCmeSettlements, 5 * 60 * 1000);
+
+            // 建立 WebSocket 連線
+            const socket = io();
+
+            // 儲存 High-Low 值
+            let xauusdHighLow = null;
+            let gcmHighLow = null;
+
+            // 更新 High-Low 比較
+            function updateHighLowDiff() {
+                console.log('更新 High-Low 比較:', { xauusdHighLow, gcmHighLow });
+                if (xauusdHighLow !== null && gcmHighLow !== null) {
+                    const diff = Math.abs(Math.max(xauusdHighLow, gcmHighLow) - Math.min(xauusdHighLow, gcmHighLow));
+                    $('#high-low-diff').text(diff.toFixed(2));
+                    $('#high-low-compare-table').removeClass('hidden');
+                    $('#high-low-compare-error').addClass('hidden');
+                } else {
+                    $('#high-low-diff').text('待計算');
+                    if (xauusdHighLow === null && gcmHighLow === null) {
+                        $('#high-low-compare-error').removeClass('hidden');
+                        $('#high-low-compare-table').addClass('hidden');
+                    }
+                }
+            }
+
+            // 實時 XAUUSD 日線 OHLCV 更新
+            socket.on('ohlcv_update', function(data) {
+                console.log('收到 ohlcv_update:', data);
+                $('#realtime-update-time').text(data.update_time);
+                $('#realtime-open').text(data.open.toFixed(2));
+                $('#realtime-high').text(data.high.toFixed(2));
+                $('#realtime-low').text(data.low.toFixed(2));
+                $('#realtime-close').text(data.close.toFixed(2));
+                $('#realtime-volume').text(data.volume);
+                $('#realtime-ohlcv-table').removeClass('hidden');
+                $('#realtime-ohlcv-error').addClass('hidden');
+
+                // 計算 XAUUSD High-Low
+                xauusdHighLow = data.high - data.low;
+                $('#xauusd-high-low').text(xauusdHighLow.toFixed(2));
+                updateHighLowDiff();
+            });
+
+            // 實時 GCM2025 日線圖 K-line 更新
+            socket.on('gcm_kline_update', function(data) {
+                console.log('收到 gcm_kline_update:', data);
+                $('#gcm-timestamp').text(data.timestamp);
+                $('#gcm-open').text(data.open.toFixed(2));
+                $('#gcm-high').text(data.high.toFixed(2));
+                $('#gcm-low').text(data.low.toFixed(2));
+                $('#gcm-close').text(data.close.toFixed(2));
+                $('#gcm-volume').text(data.volume);
+                $('#gcm-kline-table').removeClass('hidden');
+                $('#gcm-kline-error').addClass('hidden');
+
+                // 計算 GCM2025 High-Low
+                gcmHighLow = data.high - data.low;
+                $('#gcm-high-low').text(gcmHighLow.toFixed(2));
+                updateHighLowDiff();
+            });
+        });
+    </script>
+</body>
+</html>
