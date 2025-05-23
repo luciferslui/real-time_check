@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test FastAPI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center h-screen">
+    <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
+        <h1 class="text-2xl font-bold mb-4 text-center">Test FastAPI Endpoint</h1>
+        <div class="mb-4">
+            <label for="jsonInput" class="block text-sm font-medium text-gray-700">Enter JSON Data</label>
+            <textarea id="jsonInput" rows="6" class="mt-1 block w-full p-2 border border-gray-300 rounded-md" placeholder='{"key": "value"}'></textarea>
+        </div>
+        <button onclick="sendData()" class="w-full bg-blue-500 text-white p-2 rounded-md hover:bg-blue-600">Submit</button>
+        <div id="response" class="mt-4 p-2 bg-gray-100 rounded-md hidden"></div>
+    </div>
+
+    <script>
+        async function sendData() {
+            const jsonInput = document.getElementById('jsonInput').value;
+            const responseDiv = document.getElementById('response');
+
+            try {
+                const data = JSON.parse(jsonInput);
+                const response = await fetch('http://192.168.88.30:5000/send-data', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data),
+                });
+
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    const text = await response.text();
+                    throw new Error(`Server returned non-JSON response: ${text}`);
+                }
+
+                const result = await response.json();
+                responseDiv.classList.remove('hidden');
+                responseDiv.classList.remove('bg-red-100', 'bg-green-100');
+                if (response.ok) {
+                    responseDiv.classList.add('bg-green-100');
+                    responseDiv.innerHTML = `<p><strong>Success:</strong> ${JSON.stringify(result, null, 2)}</p>`;
+                } else {
+                    responseDiv.classList.add('bg-red-100');
+                    responseDiv.innerHTML = `<p><strong>Error:</strong> ${JSON.stringify(result, null, 2)}</p>`;
+                }
+            } catch (error) {
+                responseDiv.classList.remove('hidden');
+                responseDiv.classList.add('bg-red-100');
+                responseDiv.innerHTML = `<p><strong>Error:</strong> ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>
